@@ -432,6 +432,36 @@ void VulkanTexture::transitionLayout(VkCommandBuffer commands, const VkImageSubr
     }
 }
 
+void VulkanTexture::transitionLayoutForReadPixels(VkCommandBuffer commands, uint32_t baseMipLevel,
+        uint32_t baseArrayLayer, bool forward) {
+    VkImageLayout oldLayout = getVkLayout(baseArrayLayer, baseMipLevel);
+    VkImageLayout newLayout
+            = forward ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+
+    VkImageSubresourceRange const range = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = baseMipLevel,
+            .levelCount = 1,
+            .baseArrayLayer = baseArrayLayer,
+            .layerCount = 1,
+    };
+    VulkanLayoutTransition const transition = {
+            .image = mTextureImage,
+            .oldLayout = oldLayout,
+            .newLayout = newLayout,
+            .subresources = range,
+            .srcStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            .srcAccessMask = 0,
+            .dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+    };
+    transitionImageLayout(commands, transition);
+
+    const uint32_t first = (baseArrayLayer << 16) | baseMipLevel;
+    const uint32_t last = (baseArrayLayer << 16) | (baseMipLevel + 1);
+    mSubresourceLayouts.add(first, last, newLayout);
+}
+
 // Notifies the texture that a particular subresource's layout has changed.
 void VulkanTexture::trackLayout(uint32_t miplevel, uint32_t layer, VkImageLayout layout) {
     assert_invariant((miplevel + 1) <= 0xffff && layer <= 0xffff);

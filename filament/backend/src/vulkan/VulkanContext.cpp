@@ -579,7 +579,7 @@ void VulkanContext::initialize(const char* const* ppRequiredExtensions,
 
     device = createLogicalDevice(physicalDevice, physicalDeviceFeatures, graphicsQueueFamilyIndex,
             deviceExtensions);
-    // Initialize graphicsQueue, commandPool, timestamps, allocator,
+    // Initialize graphicsQueue, timestamps, allocator,
     // and command buffer manager (commands).
     afterCreateLogicalDevice();
 
@@ -618,15 +618,6 @@ void VulkanContext::afterSelectPhysicalDevice() {
 void VulkanContext::afterCreateLogicalDevice() {
     vkGetDeviceQueue(device, graphicsQueueFamilyIndex, 0,
             &graphicsQueue);
-
-    VkCommandPoolCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    createInfo.flags =
-            VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    createInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
-    VkResult result = vkCreateCommandPool(device, &createInfo, VKALLOC, &commandPool);
-    ASSERT_POSTCONDITION(result == VK_SUCCESS, "vkCreateCommandPool error.");
-
     // Create a timestamp pool large enough to hold a pair of queries for each timer.
     VkQueryPoolCreateInfo tqpCreateInfo = {};
     tqpCreateInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
@@ -634,7 +625,7 @@ void VulkanContext::afterCreateLogicalDevice() {
 
     std::unique_lock<utils::Mutex> timestamps_lock(timestamps.mutex);
     tqpCreateInfo.queryCount = timestamps.used.size() * 2;
-    result = vkCreateQueryPool(device, &tqpCreateInfo, VKALLOC, &timestamps.pool);
+    VkResult result = vkCreateQueryPool(device, &tqpCreateInfo, VKALLOC, &timestamps.pool);
     ASSERT_POSTCONDITION(result == VK_SUCCESS, "vkCreateQueryPool error.");
     timestamps.used.reset();
     timestamps_lock.unlock();

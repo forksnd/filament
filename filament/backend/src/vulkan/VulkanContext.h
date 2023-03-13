@@ -79,7 +79,6 @@ public:
     VkPhysicalDeviceFeatures physicalDeviceFeatures;
     VkPhysicalDeviceMemoryProperties memoryProperties;
     VkDevice device;
-    VkCommandPool commandPool;
     VulkanTimestamps timestamps;
     uint32_t graphicsQueueFamilyIndex;
     VkQueue graphicsQueue;
