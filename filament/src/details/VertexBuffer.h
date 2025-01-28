@@ -27,7 +27,10 @@
 #include <utils/bitset.h>
 #include <utils/compiler.h>
 
+#include <math/vec2.h>
+
 #include <array>
+#include <memory>
 #include <type_traits>
 
 namespace filament {
@@ -37,15 +40,19 @@ class FEngine;
 
 class FVertexBuffer : public VertexBuffer {
 public:
+    using VertexBufferInfoHandle = backend::VertexBufferInfoHandle;
     using VertexBufferHandle = backend::VertexBufferHandle;
     using BufferObjectHandle = backend::BufferObjectHandle;
 
     FVertexBuffer(FEngine& engine, const Builder& builder);
+    FVertexBuffer(FEngine& engine, FVertexBuffer* buffer);
 
     // frees driver resources, object becomes invalid
     void terminate(FEngine& engine);
 
     VertexBufferHandle getHwHandle() const noexcept { return mHandle; }
+
+    VertexBufferInfoHandle getVertexBufferInfoHandle() const { return mVertexBufferInfoHandle; }
 
     size_t getVertexCount() const noexcept;
 
@@ -60,20 +67,20 @@ public:
     void setBufferObjectAt(FEngine& engine, uint8_t bufferIndex,
             FBufferObject const * bufferObject);
 
+    void updateBoneIndicesAndWeights(FEngine& engine, std::unique_ptr<uint16_t[]> skinJoints,
+                                        std::unique_ptr<float[]> skinWeights);
+
 private:
     friend class VertexBuffer;
-
-    struct AttributeData : backend::Attribute {
-        AttributeData() : backend::Attribute{ .type = backend::ElementType::FLOAT4 } {}
-    };
-
+    VertexBufferInfoHandle mVertexBufferInfoHandle;
     VertexBufferHandle mHandle;
-    std::array<AttributeData, backend::MAX_VERTEX_ATTRIBUTE_COUNT> mAttributes;
+    backend::AttributeArray mAttributes;
     std::array<BufferObjectHandle, backend::MAX_VERTEX_BUFFER_COUNT> mBufferObjects;
     AttributeBitset mDeclaredAttributes;
     uint32_t mVertexCount = 0;
     uint8_t mBufferCount = 0;
     bool mBufferObjectsEnabled = false;
+    bool mAdvancedSkinningEnabled = false;
 };
 
 FILAMENT_DOWNCAST(VertexBuffer)

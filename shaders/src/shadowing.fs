@@ -8,10 +8,8 @@
 #define SHADOW_SAMPLING_RUNTIME_DPCF    2u
 #define SHADOW_SAMPLING_RUNTIME_PCSS    3u
 
-// TODO: this should be user-settable, maybe at the material level
 #define SHADOW_SAMPLING_PCF_HARD        0
 #define SHADOW_SAMPLING_PCF_LOW         1
-#define SHADOW_SAMPLING_METHOD          SHADOW_SAMPLING_PCF_LOW
 
 //------------------------------------------------------------------------------
 // PCF Shadow Sampling
@@ -19,7 +17,7 @@
 
 float sampleDepth(const mediump sampler2DArrayShadow map,
         const highp vec4 scissorNormalized,
-        const uint layer,  highp vec2 uv, float depth) {
+        const uint layer,  highp vec2 uv, highp float depth) {
 
     // clamp needed for directional lights and/or large kernels
     uv = clamp(uv, scissorNormalized.xy, scissorNormalized.zw);
@@ -29,7 +27,6 @@ float sampleDepth(const mediump sampler2DArrayShadow map,
     return texture(map, vec4(uv, layer, saturate(depth)));
 }
 
-#if SHADOW_SAMPLING_METHOD == SHADOW_SAMPLING_PCF_HARD
 // use hardware assisted PCF
 float ShadowSample_PCF_Hard(const mediump sampler2DArrayShadow map,
         const highp vec4 scissorNormalized,
@@ -38,9 +35,7 @@ float ShadowSample_PCF_Hard(const mediump sampler2DArrayShadow map,
     // note: shadowPosition.z is in the [1, 0] range (reversed Z)
     return sampleDepth(map, scissorNormalized, layer, position.xy, position.z);
 }
-#endif
 
-#if SHADOW_SAMPLING_METHOD == SHADOW_SAMPLING_PCF_LOW
 // use hardware assisted PCF + 3x3 gaussian filter
 float ShadowSample_PCF_Low(const mediump sampler2DArrayShadow map,
         const highp vec4 scissorNormalized,
@@ -51,7 +46,7 @@ float ShadowSample_PCF_Low(const mediump sampler2DArrayShadow map,
     highp vec2 texelSize = vec2(1.0) / size;
 
     //  Castaño, 2013, "Shadow Mapping Summary Part 1"
-    float depth = position.z;
+    highp float depth = position.z;
 
     // clamp position to avoid overflows below, which cause some GPUs to abort
     position.xy = clamp(position.xy, vec2(-1.0), vec2(2.0));
@@ -77,7 +72,6 @@ float ShadowSample_PCF_Low(const mediump sampler2DArrayShadow map,
     sum += uw.y * vw.y * sampleDepth(map, scissorNormalized, layer, base + vec2(u.y, v.y), depth);
     return sum * (1.0 / 16.0);
 }
-#endif
 
 // use manual PCF
 float ShadowSample_PCF(const mediump sampler2DArray map,
@@ -85,24 +79,8 @@ float ShadowSample_PCF(const mediump sampler2DArray map,
         const uint layer, const highp vec4 shadowPosition) {
     highp vec3 position = shadowPosition.xyz * (1.0 / shadowPosition.w);
     // note: shadowPosition.z is in the [1, 0] range (reversed Z)
-    highp vec2 size = vec2(textureSize(map, 0));
     highp vec2 tc = clamp(position.xy, scissorNormalized.xy, scissorNormalized.zw);
-    highp vec2 st = tc.xy * size - 0.5;
-
-    vec4 d;
-#if defined(FILAMENT_HAS_FEATURE_TEXTURE_GATHER)
-    d = textureGather(map, vec3(tc, layer), 0); // 01, 11, 10, 00
-#else
-    // we must use texelFetchOffset before texelLodOffset filters
-    d[0] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(0, 1)).r;
-    d[1] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(1, 1)).r;
-    d[2] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(1, 0)).r;
-    d[3] = texelFetchOffset(map, ivec3(st, layer), 0, ivec2(0, 0)).r;
-#endif
-
-    vec4 pcf = step(0.0, position.zzzz - d);
-    highp vec2 grad = fract(st);
-    return mix(mix(pcf.w, pcf.z, grad.x), mix(pcf.x, pcf.y, grad.x), grad.y);
+    return step(0.0, position.z - textureLod(map, vec3(tc, layer), 0.0).r);
 }
 
 //------------------------------------------------------------------------------
@@ -416,7 +394,7 @@ float screenSpaceContactShadow(vec3 lightDirection) {
     highp vec3 ray;
     for (int i = 0 ; i < kStepCount ; i++, t += dt) {
         ray = rayData.uvRayStart + rayData.uvRay * t;
-        highp float z = textureLod(light_structure, uvToRenderTargetUV(ray.xy), 0.0).r;
+        highp float z = textureLod(sampler0_structure, uvToRenderTargetUV(ray.xy), 0.0).r;
         highp float dz = z - ray.z;
         if (abs(tolerance - dz) < tolerance) {
             occlusion = 1.0;
@@ -539,11 +517,12 @@ float shadow(const bool DIRECTIONAL,
         const int index, highp vec4 shadowPosition, highp float zLight) {
     highp vec4 scissorNormalized = shadowUniforms.shadows[index].scissorNormalized;
     uint layer = shadowUniforms.shadows[index].layer;
-#if SHADOW_SAMPLING_METHOD == SHADOW_SAMPLING_PCF_HARD
-    return ShadowSample_PCF_Hard(shadowMap, scissorNormalized, layer, shadowPosition);
-#elif SHADOW_SAMPLING_METHOD == SHADOW_SAMPLING_PCF_LOW
-    return ShadowSample_PCF_Low(shadowMap, scissorNormalized, layer, shadowPosition);
-#endif
+
+    if (CONFIG_SHADOW_SAMPLING_METHOD == SHADOW_SAMPLING_PCF_HARD) {
+        return ShadowSample_PCF_Hard(shadowMap, scissorNormalized, layer, shadowPosition);
+    } else if (CONFIG_SHADOW_SAMPLING_METHOD == SHADOW_SAMPLING_PCF_LOW) {
+        return ShadowSample_PCF_Low(shadowMap, scissorNormalized, layer, shadowPosition);
+    }
 }
 
 // Shadow requiring a sampler2D sampler (VSM, DPCF and PCSS)

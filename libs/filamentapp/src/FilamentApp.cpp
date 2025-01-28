@@ -1,4 +1,3 @@
-#include <memory>
 
 /*
  * Copyright (C) 2015 The Android Open Source Project
@@ -38,6 +37,7 @@
 #include <filament/RenderableManager.h>
 #include <filament/Scene.h>
 #include <filament/Skybox.h>
+#include <filament/SwapChain.h>
 #include <filament/View.h>
 
 #ifndef NDEBUG
@@ -55,6 +55,13 @@
 
 #include <stb_image.h>
 
+#include <algorithm>
+#include <cstdlib>
+#include <memory>
+#include <vector>
+
+#include <stdint.h>
+
 #include "generated/resources/filamentapp.h"
 
 using namespace filament;
@@ -69,24 +76,30 @@ using namespace filament::backend;
 #if defined(FILAMENT_DRIVER_SUPPORTS_VULKAN)
 class FilamentAppVulkanPlatform : public VulkanPlatform {
 public:
-    FilamentAppVulkanPlatform(std::string const& gpuHint) {
+    FilamentAppVulkanPlatform(char const* gpuHintCstr) {
+        utils::CString gpuHint{ gpuHintCstr };
         if (gpuHint.empty()) {
             return;
         }
+        VulkanPlatform::Customization::GPUPreference pref;
         // Check to see if it is an integer, if so turn it into an index.
         if (std::all_of(gpuHint.begin(), gpuHint.end(), ::isdigit)) {
-            mPreference.index = static_cast<int8_t>(std::stoi(gpuHint));
-            return;
+            char* p_end {};
+            pref.index = static_cast<int8_t>(std::strtol(gpuHint.c_str(), &p_end, 10));
+        } else {
+            pref.deviceName = gpuHint;
         }
-        mPreference.deviceName = gpuHint;
+        mCustomization = {
+            .gpu = pref
+        };
     }
 
-    virtual VulkanPlatform::GPUPreference getPreferredGPU() noexcept override {
-        return mPreference;
+    virtual VulkanPlatform::Customization getCustomization() const noexcept override {
+        return mCustomization;
     }
 
 private:
-    VulkanPlatform::GPUPreference mPreference;
+    VulkanPlatform::Customization mCustomization;
 };
 #endif
 
@@ -131,10 +144,17 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
             .package(FILAMENTAPP_TRANSPARENTCOLOR_DATA, FILAMENTAPP_TRANSPARENTCOLOR_SIZE)
             .build(*mEngine);
 
-    std::unique_ptr<Cube> cameraCube(new Cube(*mEngine, mTransparentMaterial, {1,0,0}));
+    std::unique_ptr<Cube> cameraCube{ new Cube(*mEngine, mTransparentMaterial, { 1, 0, 0 }) };
+
     // we can't cull the light-frustum because it's not applied a rigid transform
     // and currently, filament assumes that for culling
-    std::unique_ptr<Cube> lightmapCube(new Cube(*mEngine, mTransparentMaterial, {0,1,0}, false));
+    std::vector<Cube> lightmapCubes;
+    lightmapCubes.reserve(4);
+    lightmapCubes.emplace_back(*mEngine, mTransparentMaterial, float3{ 0, 1, 0 }, false);
+    lightmapCubes.emplace_back(*mEngine, mTransparentMaterial, float3{ 0, 0, 1 }, false);
+    lightmapCubes.emplace_back(*mEngine, mTransparentMaterial, float3{ 1, 1, 0 }, false);
+    lightmapCubes.emplace_back(*mEngine, mTransparentMaterial, float3{ 1, 0, 0 }, false);
+
     mScene = mEngine->createScene();
 
     window->mMainView->getView()->setVisibleLayers(0x4, 0x4);
@@ -144,16 +164,15 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
 
         rcm.setLayerMask(rcm.getInstance(cameraCube->getSolidRenderable()), 0x3, 0x2);
         rcm.setLayerMask(rcm.getInstance(cameraCube->getWireFrameRenderable()), 0x3, 0x2);
-
-        rcm.setLayerMask(rcm.getInstance(lightmapCube->getSolidRenderable()), 0x3, 0x2);
-        rcm.setLayerMask(rcm.getInstance(lightmapCube->getWireFrameRenderable()), 0x3, 0x2);
-
-        // Create the camera mesh
         mScene->addEntity(cameraCube->getWireFrameRenderable());
         mScene->addEntity(cameraCube->getSolidRenderable());
 
-        mScene->addEntity(lightmapCube->getWireFrameRenderable());
-        mScene->addEntity(lightmapCube->getSolidRenderable());
+        for (auto&& cube : lightmapCubes) {
+            rcm.setLayerMask(rcm.getInstance(cube.getSolidRenderable()), 0x3, 0x2);
+            rcm.setLayerMask(rcm.getInstance(cube.getWireFrameRenderable()), 0x3, 0x2);
+            mScene->addEntity(cube.getWireFrameRenderable());
+            mScene->addEntity(cube.getSolidRenderable());
+        }
 
         window->mDepthView->getView()->setVisibleLayers(0x4, 0x4);
         window->mGodView->getView()->setVisibleLayers(0x6, 0x6);
@@ -167,11 +186,6 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
 
     loadDirt(config);
     loadIBL(config);
-    if (mIBL != nullptr) {
-        mIBL->getSkybox()->setLayerMask(0x7, 0x4);
-        mScene->setSkybox(mIBL->getSkybox());
-        mScene->setIndirectLight(mIBL->getIndirectLight());
-    }
 
     for (auto& view : window->mViews) {
         if (view.get() != window->mUiView) {
@@ -189,7 +203,7 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
             SDL_SysWMinfo wmInfo;
             SDL_VERSION(&wmInfo.version);
             SDL_GetWindowWMInfo(window->getSDLWindow(), &wmInfo);
-            io.ImeWindowHandle = wmInfo.info.win.window;
+            ImGui::GetMainViewport()->PlatformHandleRaw = wmInfo.info.win.window;
         #endif
         io.KeyMap[ImGuiKey_Tab] = SDL_SCANCODE_TAB;
         io.KeyMap[ImGuiKey_LeftArrow] = SDL_SCANCODE_LEFT;
@@ -423,8 +437,26 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
         window->mDebugCamera->lookAt(eye, center, up);
 
         // Update the cube distortion matrix used for frustum visualization.
-        const Camera* lightmapCamera = window->mMainView->getView()->getDirectionalLightCamera();
-        lightmapCube->mapFrustum(*mEngine, lightmapCamera);
+        auto& rcm = mEngine->getRenderableManager();
+        auto const csm = window->mMainView->getView()->getDirectionalShadowCameras();
+        // show/hide the cascades
+        for (size_t i = 0 ; i < 4; i++) {
+            rcm.setLayerMask(rcm.getInstance(lightmapCubes[i].getSolidRenderable()), 0x3, 0x0);
+            rcm.setLayerMask(rcm.getInstance(lightmapCubes[i].getWireFrameRenderable()), 0x3, 0x0);
+        }
+        if (!csm.empty()) {
+            for (size_t i = 0, c = csm.size(); i < c; i++) {
+                if (csm[i]) {
+                    lightmapCubes[i].mapFrustum(*mEngine, csm[i]);
+                }
+                uint8_t const layer = csm[i] ? 0x2 : 0x0;
+                rcm.setLayerMask(rcm.getInstance(lightmapCubes[i].getSolidRenderable()),
+                        0x3, layer);
+                rcm.setLayerMask(rcm.getInstance(lightmapCubes[i].getWireFrameRenderable()),
+                        0x3, layer);
+            }
+        }
+
         cameraCube->mapFrustum(*mEngine, window->mMainCamera);
 
         // Delay rendering for roughly one monitor refresh interval
@@ -441,18 +473,36 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
             preRender(mEngine, window->mViews[0]->getView(), mScene, renderer);
         }
 
+        if (mReconfigureCameras) {
+            window->configureCamerasForWindow();
+            mReconfigureCameras = false;
+        }
+
+        if (config.splitView) {
+            if(!window->mOrthoView->getView()->hasCamera()) {
+                auto const csm = window->mMainView->getView()->getDirectionalShadowCameras();
+                if (!csm.empty()) {
+                    // here we could choose the cascade
+                    Camera const* debugDirectionalShadowCamera = csm[0];
+                    if (debugDirectionalShadowCamera) {
+                        window->mOrthoView->setCamera(
+                                const_cast<Camera*>(debugDirectionalShadowCamera));
+                    }
+                }
+            }
+        }
+
         if (renderer->beginFrame(window->getSwapChain())) {
-            for (filament::View* offscreenView : mOffscreenViews) {
+            for (filament::View* offscreenView: mOffscreenViews) {
                 renderer->render(offscreenView);
             }
-            for (auto const& view : window->mViews) {
+            for (auto const& view: window->mViews) {
                 renderer->render(view->getView());
             }
             if (postRender) {
                 postRender(mEngine, window->mViews[0]->getView(), mScene, renderer);
             }
             renderer->endFrame();
-
         } else {
             ++mSkippedFrames;
         }
@@ -465,7 +515,7 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
     cleanupCallback(mEngine, window->mMainView->getView(), mScene);
 
     cameraCube.reset();
-    lightmapCube.reset();
+    lightmapCubes.clear();
     window.reset();
 
     mIBL.reset();
@@ -495,31 +545,44 @@ const utils::Path& FilamentApp::getRootAssetsPath() {
     return root;
 }
 
-void FilamentApp::loadIBL(const Config& config) {
-    if (!config.iblDirectory.empty()) {
-        Path iblPath(config.iblDirectory);
+void FilamentApp::loadIBL(std::string_view path) {
+    Path iblPath(path);
+    if (!iblPath.exists()) {
+        std::cerr << "The specified IBL path does not exist: " << iblPath << std::endl;
+        return;
+    }
 
-        if (!iblPath.exists()) {
-            std::cerr << "The specified IBL path does not exist: " << iblPath << std::endl;
+    // Note that IBL holds a skybox, and Scene also holds a reference.  We cannot release IBL's
+    // skybox until after new skybox has been set in the scene.
+    std::unique_ptr<IBL> oldIBL = std::move(mIBL);
+    mIBL = std::make_unique<IBL>(*mEngine);
+
+    if (!iblPath.isDirectory()) {
+        if (!mIBL->loadFromEquirect(iblPath)) {
+            std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
+            mIBL.reset(nullptr);
             return;
         }
-
-        mIBL = std::make_unique<IBL>(*mEngine);
-
-        if (!iblPath.isDirectory()) {
-            if (!mIBL->loadFromEquirect(iblPath)) {
-                std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
-                mIBL.reset(nullptr);
-                return;
-            }
-        } else {
-            if (!mIBL->loadFromDirectory(iblPath)) {
-                std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
-                mIBL.reset(nullptr);
-                return;
-            }
+    } else {
+        if (!mIBL->loadFromDirectory(iblPath)) {
+            std::cerr << "Could not load the specified IBL: " << iblPath << std::endl;
+            mIBL.reset(nullptr);
+            return;
         }
     }
+
+    if (mIBL != nullptr) {
+        mIBL->getSkybox()->setLayerMask(0x7, 0x4);
+        mScene->setSkybox(mIBL->getSkybox());
+        mScene->setIndirectLight(mIBL->getIndirectLight());
+    }
+}
+
+void FilamentApp::loadIBL(const Config& config) {
+    if (config.iblDirectory.empty()) {
+        return;
+    }
+    loadIBL(config.iblDirectory);
 }
 
 void FilamentApp::loadDirt(const Config& config) {
@@ -554,14 +617,14 @@ void FilamentApp::loadDirt(const Config& config) {
 }
 
 void FilamentApp::initSDL() {
-    ASSERT_POSTCONDITION(SDL_Init(SDL_INIT_EVENTS) == 0, "SDL_Init Failure");
+    FILAMENT_CHECK_POSTCONDITION(SDL_Init(SDL_INIT_EVENTS) == 0) << "SDL_Init Failure";
 }
 
 // ------------------------------------------------------------------------------------------------
 
 FilamentApp::Window::Window(FilamentApp* filamentApp,
         const Config& config, std::string title, size_t w, size_t h)
-        : mFilamentApp(filamentApp), mIsHeadless(config.headless) {
+        : mFilamentApp(filamentApp), mConfig(config), mIsHeadless(config.headless) {
     const int x = SDL_WINDOWPOS_CENTERED;
     const int y = SDL_WINDOWPOS_CENTERED;
     uint32_t windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI;
@@ -582,23 +645,40 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
 
         // This mirrors the logic for choosing a backend given compile-time flags and client having
         // provided DEFAULT as the backend (see PlatformFactory.cpp)
-        #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(IOS) && \
+        #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(FILAMENT_IOS) && \
             !defined(__APPLE__) && defined(FILAMENT_DRIVER_SUPPORTS_VULKAN)
             if (backend == Engine::Backend::DEFAULT) {
                 backend = Engine::Backend::VULKAN;
             }
         #endif
 
+        Engine::Config engineConfig = {};
+        engineConfig.stereoscopicEyeCount = config.stereoscopicEyeCount;
+#if defined(FILAMENT_SAMPLES_STEREO_TYPE_INSTANCED)
+        engineConfig.stereoscopicType = Engine::StereoscopicType::INSTANCED;
+#elif defined (FILAMENT_SAMPLES_STEREO_TYPE_MULTIVIEW)
+        engineConfig.stereoscopicType = Engine::StereoscopicType::MULTIVIEW;
+#else
+        engineConfig.stereoscopicType = Engine::StereoscopicType::NONE;
+#endif
+
         if (backend == Engine::Backend::VULKAN) {
             #if defined(FILAMENT_DRIVER_SUPPORTS_VULKAN)
-                mFilamentApp->mVulkanPlatform = new FilamentAppVulkanPlatform(config.vulkanGPUHint);
+                mFilamentApp->mVulkanPlatform =
+                        new FilamentAppVulkanPlatform(config.vulkanGPUHint.c_str());
                 return Engine::Builder()
                         .backend(backend)
                         .platform(mFilamentApp->mVulkanPlatform)
+                        .featureLevel(config.featureLevel)
+                        .config(&engineConfig)
                         .build();
             #endif
         }
-        return Engine::Builder().backend(backend).build();
+        return Engine::Builder()
+                .backend(backend)
+                .featureLevel(config.featureLevel)
+                .config(&engineConfig)
+                .build();
     };
 
     if (config.headless) {
@@ -639,13 +719,13 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
 
 #endif
 
-        // Select the feature level to use
-        config.featureLevel = std::min(config.featureLevel,
-                mFilamentApp->mEngine->getSupportedFeatureLevel());
-        mFilamentApp->mEngine->setActiveFeatureLevel(config.featureLevel);
+        // Write back the active feature level.
+        config.featureLevel = mFilamentApp->mEngine->getActiveFeatureLevel();
 
-        mSwapChain = mFilamentApp->mEngine->createSwapChain(nativeSwapChain);
+        mSwapChain = mFilamentApp->mEngine->createSwapChain(
+                nativeSwapChain, filament::SwapChain::CONFIG_HAS_STENCIL_BUFFER);
     }
+
     mRenderer = mFilamentApp->mEngine->createRenderer();
 
     // create cameras
@@ -690,9 +770,6 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
         mGodView->setCamera(mMainCamera);
         mGodView->setGodCamera(mDebugCamera);
         mGodView->setCameraManipulator(mDebugCameraMan);
-
-        // Ortho view obviously uses an ortho camera
-        mOrthoView->setCamera( (Camera *)mMainView->getView()->getDirectionalLightCamera() );
     }
 
     // configure the cameras
@@ -858,29 +935,38 @@ void FilamentApp::Window::configureCamerasForWindow() {
 
     const bool splitview = mViews.size() > 2;
 
-    // To trigger a floating-point exception, users could shrink the window to be smaller than
-    // the sidebar. To prevent this we simply clamp the width of the main viewport.
-    const uint32_t mainWidth = splitview ? width : std::max(1, (int) width - sidebar);
+    const uint32_t mainWidth = std::max(2, (int) width - sidebar);
 
     double near = mFilamentApp->mCameraNear;
     double far = mFilamentApp->mCameraFar;
-    mMainCamera->setLensProjection(mFilamentApp->mCameraFocalLength, 1.0, near, far);
-    mDebugCamera->setProjection(45.0, double(width) / height, 0.0625, 4096, Camera::Fov::VERTICAL);
+    if (mMainView->getView()->getStereoscopicOptions().enabled) {
+        mat4 projections[4];
+        projections[0] = Camera::projection(mFilamentApp->mCameraFocalLength, 1.0, near, far);
+        projections[1] = projections[0];
+        // simulate foveated rendering
+        projections[2] = Camera::projection(mFilamentApp->mCameraFocalLength * 2.0, 1.0, near, far);
+        projections[3] = projections[2];
+        mMainCamera->setCustomEyeProjection(projections, 4, projections[0], near, far);
+    } else {
+        mMainCamera->setLensProjection(mFilamentApp->mCameraFocalLength, 1.0, near, far);
+    }
+    mDebugCamera->setProjection(45.0, double(mainWidth) / height, 0.0625, 4096, Camera::Fov::VERTICAL);
 
     auto aspectRatio = double(mainWidth) / height;
     if (mMainView->getView()->getStereoscopicOptions().enabled) {
-        aspectRatio = double(mainWidth) / 2.0 / height;
+        const int ec = mConfig.stereoscopicEyeCount;
+        aspectRatio = double(mainWidth) / ec / height;
     }
     mMainCamera->setScaling({1.0 / aspectRatio, 1.0});
 
     // We're in split view when there are more views than just the Main and UI views.
     if (splitview) {
-        uint32_t vpw = width / 2;
-        uint32_t vph = height / 2;
-        mMainView->setViewport ({            0,            0, vpw,         vph          });
-        mDepthView->setViewport({ int32_t(vpw),            0, width - vpw, vph          });
-        mGodView->setViewport  ({ int32_t(vpw), int32_t(vph), width - vpw, height - vph });
-        mOrthoView->setViewport({            0, int32_t(vph), vpw,         height - vph });
+        uint32_t const vpw = mainWidth / 2;
+        uint32_t const vph = height / 2;
+        mMainView->setViewport ({ sidebar +            0,            0, vpw, vph });
+        mDepthView->setViewport({ sidebar + int32_t(vpw),            0, vpw, vph });
+        mGodView->setViewport  ({ sidebar + int32_t(vpw), int32_t(vph), vpw, vph });
+        mOrthoView->setViewport({ sidebar +            0, int32_t(vph), vpw, vph });
     } else {
         mMainView->setViewport({ sidebar, 0, mainWidth, height });
     }

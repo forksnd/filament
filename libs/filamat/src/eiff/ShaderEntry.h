@@ -34,16 +34,14 @@ struct TextEntry {
     std::string shader;
 };
 
-struct SpirvEntry {
+struct BinaryEntry {
     filament::backend::ShaderModel shaderModel;
     filament::Variant variant;
     filament::backend::ShaderStage stage;
-    size_t dictionaryIndex;
+    size_t dictionaryIndex;  // maps to an index in the blob dictionary
 
-#ifndef FILAMAT_LITE
-    // temporarily holds this entry's spirv until added to the dictionary
-    std::vector<uint32_t> spirv;
-#endif
+    // temporarily holds this entry's binary data until added to the dictionary
+    std::vector<uint8_t> data;
 };
 
 }  // namespace filamat

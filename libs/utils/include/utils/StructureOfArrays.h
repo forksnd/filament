@@ -17,8 +17,10 @@
 #ifndef TNT_UTILS_STRUCTUREOFARRAYS_H
 #define TNT_UTILS_STRUCTUREOFARRAYS_H
 
+#include <type_traits>
 #include <utils/Allocator.h>
 #include <utils/compiler.h>
+#include <utils/debug.h>
 #include <utils/Slice.h>
 
 #include <stddef.h>
@@ -128,7 +130,7 @@ public:
         friend class IteratorValueRef;
         friend iterator;
         friend const_iterator;
-        using Type = std::tuple<typename std::decay<Elements>::type...>;
+        using Type = std::tuple<std::decay_t<Elements>...>;
         Type elements;
 
         template<size_t ... Is>
@@ -352,33 +354,55 @@ public:
         return push_back_unsafe(std::forward<Elements>(args)...);
     }
 
-    // in C++20 we could use a lambda with explicit template parameter instead
-    struct PushBackUnsafeClosure {
-        size_t last;
-        std::tuple<Elements...> args;
-        inline explicit PushBackUnsafeClosure(size_t last, Structure&& args)
-                : last(last), args(std::forward<Structure>(args)) {}
-        template<size_t I>
-        inline void operator()(TypeAt<I>* p) {
-            new(p + last) TypeAt<I>{ std::get<I>(args) };
-        }
-    };
+    template <std::size_t... Indices>
+    struct ElementIndices {};
+ 
+    template <std::size_t N, std::size_t... Indices>
+    struct BuildElementIndices : BuildElementIndices<N - 1, N - 1, Indices...> {};
+
+    template <std::size_t... Indices>
+    struct BuildElementIndices<0, Indices...> : ElementIndices<Indices...> {};
+
+    template<std::size_t... Indices>
+    void push_back_unsafe(Structure&& args, ElementIndices<Indices...>){
+        size_t last = mSize++;
+        // Fold expression on the comma operator
+        ([&]{
+            new(std::get<Indices>(mArrays) + last) Elements{std::get<Indices>(std::forward<Structure>(args))};
+        }() , ...);
+    }
+
+    template<std::size_t... Indices>
+    void push_back_unsafe(Elements const& ... args, ElementIndices<Indices...>){
+        size_t last = mSize++;
+        // Fold expression on the comma operator
+        ([&]{
+            new(std::get<Indices>(mArrays) + last) Elements{args};
+        }() , ...);
+    }
+
+    template<std::size_t... Indices>
+    void push_back_unsafe(Elements && ... args, ElementIndices<Indices...>){
+        size_t last = mSize++;
+        // Fold expression on the comma operator
+        ([&]{
+            new(std::get<Indices>(mArrays) + last) Elements{std::forward<Elements>(args)};
+        }() , ...);
+    }
 
     StructureOfArraysBase& push_back_unsafe(Structure&& args) noexcept {
-        for_each_index(mArrays,
-                PushBackUnsafeClosure{ mSize++, std::forward<Structure>(args) });
+        push_back_unsafe(std::forward<Structure>(args), BuildElementIndices<sizeof...(Elements)>{});
         return *this;
     }
 
     StructureOfArraysBase& push_back_unsafe(Elements const& ... args) noexcept {
-        for_each_index(mArrays,
-                PushBackUnsafeClosure{ mSize++, { args... } });
+        push_back_unsafe(args..., BuildElementIndices<sizeof...(Elements)>{});
+
         return *this;
     }
 
     StructureOfArraysBase& push_back_unsafe(Elements&& ... args) noexcept {
-        for_each_index(mArrays,
-                PushBackUnsafeClosure{ mSize++, { std::forward<Elements>(args)... }});
+        push_back_unsafe(std::forward<Elements>(args)..., BuildElementIndices<sizeof...(Elements)>{});
         return *this;
     }
 
@@ -489,7 +513,7 @@ public:
             return (soa.elementAt<E>(i) = other);
         }
         UTILS_ALWAYS_INLINE Type const& operator = (Type&& other) noexcept {
-            return (soa.elementAt<E>(i) = other);
+            return (soa.elementAt<E>(i) = std::forward<Type>(other));
         }
         // comparisons
         UTILS_ALWAYS_INLINE bool operator==(Type const& other) const {
@@ -511,29 +535,29 @@ public:
 
 private:
     template<std::size_t I = 0, typename FuncT, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type
+    inline std::enable_if_t<I == sizeof...(Tp), void>
     for_each(std::tuple<Tp...>&, FuncT) {}
 
     template<std::size_t I = 0, typename FuncT, typename... Tp>
-    inline typename std::enable_if<I < sizeof...(Tp), void>::type
+    inline std::enable_if_t<I < sizeof...(Tp), void>
     for_each(std::tuple<Tp...>& t, FuncT f) {
         f(I, std::get<I>(t));
         for_each<I + 1, FuncT, Tp...>(t, f);
     }
 
     template<std::size_t I = 0, typename FuncT, typename... Tp>
-    inline typename std::enable_if<I == sizeof...(Tp), void>::type
+    inline std::enable_if_t<I == sizeof...(Tp), void>
     for_each_index(std::tuple<Tp...>&, FuncT) {}
 
     template<std::size_t I = 0, typename FuncT, typename... Tp>
-    inline typename std::enable_if<I < sizeof...(Tp), void>::type
+    inline std::enable_if_t<I < sizeof...(Tp), void>
     for_each_index(std::tuple<Tp...>& t, FuncT f) {
         f.template operator()<I>(std::get<I>(t));
         for_each_index<I + 1, FuncT, Tp...>(t, f);
     }
 
     inline void resizeNoCheck(size_t needed) noexcept {
-        assert(mCapacity >= needed);
+        assert_invariant(mCapacity >= needed);
         if (needed < mSize) {
             // we shrink the arrays
             destroy_each(needed, mSize);
@@ -573,7 +597,7 @@ private:
 
     void construct_each(size_t from, size_t to) noexcept {
         forEach([from, to](auto p) {
-            using T = typename std::decay<decltype(*p)>::type;
+            using T = std::decay_t<decltype(*p)>;
             // note: scalar types like int/float get initialized to zero
             if constexpr (!std::is_trivially_default_constructible_v<T>) {
                 for (size_t i = from; i < to; i++) {
@@ -585,7 +609,7 @@ private:
 
     void destroy_each(size_t from, size_t to) noexcept {
         forEach([from, to](auto p) {
-            using T = typename std::decay<decltype(*p)>::type;
+            using T = std::decay_t<decltype(*p)>;
             if constexpr (!std::is_trivially_destructible_v<T>) {
                 for (size_t i = from; i < to; i++) {
                     p[i].~T();
@@ -600,7 +624,7 @@ private:
         if (mSize) {
             auto size = mSize; // placate a compiler warning
             forEach([buffer, &index, &offsets, size](auto p) {
-                using T = typename std::decay<decltype(*p)>::type;
+                using T = std::decay_t<decltype(*p)>;
                 T* UTILS_RESTRICT b = static_cast<T*>(buffer);
 
                 // go through each element and move them from the old array to the new
@@ -647,7 +671,7 @@ template<typename Allocator, typename... Elements>
 inline
 typename StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef&
 StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef::operator=(
-        StructureOfArraysBase::IteratorValueRef const& rhs) {
+        IteratorValueRef const& rhs) {
     return operator=(IteratorValue(rhs));
 }
 
@@ -655,7 +679,7 @@ template<typename Allocator, typename... Elements>
 inline
 typename StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef&
 StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef::operator=(
-        StructureOfArraysBase::IteratorValueRef&& rhs) noexcept {
+        IteratorValueRef&& rhs) noexcept {
     return operator=(IteratorValue(rhs));
 }
 
@@ -664,7 +688,7 @@ template<size_t... Is>
 inline
 typename StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef&
 StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef::assign(
-        StructureOfArraysBase::IteratorValue const& rhs, std::index_sequence<Is...>) {
+        IteratorValue const& rhs, std::index_sequence<Is...>) {
     // implements IteratorValueRef& IteratorValueRef::operator=(IteratorValue const& rhs)
     auto UTILS_UNUSED l = { (soa->elementAt<Is>(index) = std::get<Is>(rhs.elements), 0)... };
     return *this;
@@ -675,7 +699,7 @@ template<size_t... Is>
 inline
 typename StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef&
 StructureOfArraysBase<Allocator, Elements...>::IteratorValueRef::assign(
-        StructureOfArraysBase::IteratorValue&& rhs, std::index_sequence<Is...>) noexcept {
+        IteratorValue&& rhs, std::index_sequence<Is...>) noexcept {
     // implements IteratorValueRef& IteratorValueRef::operator=(IteratorValue&& rhs) noexcept
     auto UTILS_UNUSED l = {
             (soa->elementAt<Is>(index) = std::move(std::get<Is>(rhs.elements)), 0)... };

@@ -19,16 +19,19 @@
 #ifndef TNT_FILAMENT_VIEW_H
 #define TNT_FILAMENT_VIEW_H
 
-#include <filament/Color.h>
 #include <filament/FilamentAPI.h>
 #include <filament/Options.h>
 
-#include <backend/DriverEnums.h>
-
 #include <utils/compiler.h>
 #include <utils/Entity.h>
+#include <utils/FixedCapacityVector.h>
 
 #include <math/mathfwd.h>
+
+#include <utility>
+
+#include <stddef.h>
+#include <stdint.h>
 
 namespace filament {
 
@@ -38,6 +41,7 @@ class CallbackHandler;
 
 class Camera;
 class ColorGrading;
+class Engine;
 class MaterialInstance;
 class RenderTarget;
 class Scene;
@@ -66,32 +70,32 @@ class Viewport;
  */
 class UTILS_PUBLIC View : public FilamentAPI {
 public:
-    using QualityLevel = QualityLevel;
-    using BlendMode = BlendMode;
-    using AntiAliasing = AntiAliasing;
-    using Dithering = Dithering;
-    using ShadowType = ShadowType;
+    using QualityLevel = filament::QualityLevel;
+    using BlendMode = filament::BlendMode;
+    using AntiAliasing = filament::AntiAliasing;
+    using Dithering = filament::Dithering;
+    using ShadowType = filament::ShadowType;
 
-    using DynamicResolutionOptions = DynamicResolutionOptions;
-    using BloomOptions = BloomOptions;
-    using FogOptions = FogOptions;
-    using DepthOfFieldOptions = DepthOfFieldOptions;
-    using VignetteOptions = VignetteOptions;
-    using RenderQuality = RenderQuality;
-    using AmbientOcclusionOptions = AmbientOcclusionOptions;
-    using TemporalAntiAliasingOptions = TemporalAntiAliasingOptions;
-    using MultiSampleAntiAliasingOptions = MultiSampleAntiAliasingOptions;
-    using VsmShadowOptions = VsmShadowOptions;
-    using SoftShadowOptions = SoftShadowOptions;
-    using ScreenSpaceReflectionsOptions = ScreenSpaceReflectionsOptions;
-    using GuardBandOptions = GuardBandOptions;
-    using StereoscopicOptions = StereoscopicOptions;
+    using DynamicResolutionOptions = filament::DynamicResolutionOptions;
+    using BloomOptions = filament::BloomOptions;
+    using FogOptions = filament::FogOptions;
+    using DepthOfFieldOptions = filament::DepthOfFieldOptions;
+    using VignetteOptions = filament::VignetteOptions;
+    using RenderQuality = filament::RenderQuality;
+    using AmbientOcclusionOptions = filament::AmbientOcclusionOptions;
+    using TemporalAntiAliasingOptions = filament::TemporalAntiAliasingOptions;
+    using MultiSampleAntiAliasingOptions = filament::MultiSampleAntiAliasingOptions;
+    using VsmShadowOptions = filament::VsmShadowOptions;
+    using SoftShadowOptions = filament::SoftShadowOptions;
+    using ScreenSpaceReflectionsOptions = filament::ScreenSpaceReflectionsOptions;
+    using GuardBandOptions = filament::GuardBandOptions;
+    using StereoscopicOptions = filament::StereoscopicOptions;
 
     /**
      * Sets the View's name. Only useful for debugging.
      * @param name Pointer to the View's name. The string is copied.
      */
-    void setName(const char* name) noexcept;
+    void setName(const char* UTILS_NONNULL name) noexcept;
 
     /**
      * Returns the View's name
@@ -100,7 +104,7 @@ public:
      *
      * @attention Do *not* free the pointer or modify its content.
      */
-    const char* getName() const noexcept;
+    const char* UTILS_NULLABLE getName() const noexcept;
 
     /**
      * Set this View instance's Scene.
@@ -116,19 +120,19 @@ public:
      *  There is no reference-counting.
      *  Make sure to dissociate a Scene from all Views before destroying it.
      */
-    void setScene(Scene* scene);
+    void setScene(Scene* UTILS_NULLABLE scene);
 
     /**
      * Returns the Scene currently associated with this View.
      * @return A pointer to the Scene associated to this View. nullptr if no Scene is set.
      */
-    Scene* getScene() noexcept;
+    Scene* UTILS_NULLABLE getScene() noexcept;
 
     /**
      * Returns the Scene currently associated with this View.
      * @return A pointer to the Scene associated to this View. nullptr if no Scene is set.
      */
-    Scene const* getScene() const noexcept {
+    Scene const* UTILS_NULLABLE getScene() const noexcept {
         return const_cast<View*>(this)->getScene();
     }
 
@@ -143,7 +147,7 @@ public:
      *
      * @param renderTarget Render target associated with view, or nullptr for the swap chain.
      */
-    void setRenderTarget(RenderTarget* renderTarget) noexcept;
+    void setRenderTarget(RenderTarget* UTILS_NULLABLE renderTarget) noexcept;
 
     /**
      * Gets the offscreen render target associated with this view.
@@ -152,7 +156,7 @@ public:
      *
      * @see setRenderTarget
      */
-    RenderTarget* getRenderTarget() const noexcept;
+    RenderTarget* UTILS_NULLABLE getRenderTarget() const noexcept;
 
     /**
      * Sets the rectangular region to render to.
@@ -185,7 +189,14 @@ public:
      *  There is no reference-counting.
      *  Make sure to dissociate a Camera from all Views before destroying it.
      */
-    void setCamera(Camera* camera) noexcept;
+    void setCamera(Camera* UTILS_NONNULL camera) noexcept;
+
+    /**
+     * Returns whether a Camera is set.
+     * @return true if a camera is set.
+     * @see setCamera()
+     */
+    bool hasCamera() const noexcept;
 
     /**
      * Returns the Camera currently associated with this View.
@@ -402,13 +413,13 @@ public:
      *  There is no reference-counting.
      *  Make sure to dissociate a ColorGrading from all Views before destroying it.
      */
-    void setColorGrading(ColorGrading* colorGrading) noexcept;
+    void setColorGrading(ColorGrading* UTILS_NULLABLE colorGrading) noexcept;
 
     /**
      * Returns the color grading transforms currently associated to this view.
      * @return A pointer to the ColorGrading associated to this View.
      */
-    const ColorGrading* getColorGrading() const noexcept;
+    const ColorGrading* UTILS_NULLABLE getColorGrading() const noexcept;
 
     /**
      * Sets ambient occlusion options.
@@ -560,6 +571,13 @@ public:
     void setShadowType(ShadowType shadow) noexcept;
 
     /**
+     * Returns the shadow mapping technique used by this View.
+     *
+     * @return value set by setShadowType().
+     */
+    ShadowType getShadowType() const noexcept;
+
+    /**
      * Sets VSM shadowing options that apply across the entire View.
      *
      * Additional light-specific VSM options can be set with LightManager::setShadowOptions.
@@ -651,6 +669,26 @@ public:
     bool isFrontFaceWindingInverted() const noexcept;
 
     /**
+     * Enables or disables transparent picking. Disabled by default.
+     *
+     * When transparent picking is enabled, View::pick() will pick from both
+     * transparent and opaque renderables. When disabled, View::pick() will only
+     * pick from opaque renderables.
+     *
+     * @param enabled true enables transparent picking, false disables it.
+     *
+     * @note Transparent picking will create an extra pass for rendering depth
+     *       from both transparent and opaque renderables. 
+     */
+    void setTransparentPickingEnabled(bool enabled) noexcept;
+
+    /**
+     * Returns true if transparent picking is enabled.
+     * See setTransparentPickingEnabled() for more information.
+     */
+    bool isTransparentPickingEnabled() const noexcept;
+
+    /**
      * Enables use of the stencil buffer.
      *
      * The stencil buffer is an 8-bit, per-fragment unsigned integer stored alongside the depth
@@ -662,7 +700,8 @@ public:
      * Material's stencil comparison function and reference value. Fragments that don't pass the
      * stencil test are then discarded.
      *
-     * Post-processing must be enabled in order to use the stencil buffer.
+     * If post-processing is disabled, then the SwapChain must have the CONFIG_HAS_STENCIL_BUFFER
+     * flag set in order to use the stencil buffer.
      *
      * A renderable's priority (see RenderableManager::setPriority) is useful to control the order
      * in which primitives are drawn.
@@ -690,11 +729,12 @@ public:
      * - punctual lights
      *
      * Stereo rendering depends on device and platform support. To check if stereo rendering is
-     * supported, use Engine::isStereoSupported().
+     * supported, use Engine::isStereoSupported(). If stereo rendering is not supported, then the
+     * stereoscopic options have no effect.
      *
      * @param options The stereoscopic options to use on this view
      */
-    void setStereoscopicOptions(StereoscopicOptions const& options);
+    void setStereoscopicOptions(StereoscopicOptions const& options) noexcept;
 
     /**
      * Returns the stereoscopic options associated with this View.
@@ -712,10 +752,10 @@ public:
     bool isFrustumCullingEnabled() const noexcept;
 
     //! debugging: sets the Camera used for rendering. It may be different from the culling camera.
-    void setDebugCamera(Camera* camera) noexcept;
+    void setDebugCamera(Camera* UTILS_NULLABLE camera) noexcept;
 
     //! debugging: returns a Camera from the point of view of *the* dominant directional light used for shadowing.
-    Camera const* getDirectionalLightCamera() const noexcept;
+    utils::FixedCapacityVector<Camera const*> getDirectionalShadowCameras() const noexcept;
 
 
     /** Result of a picking query */
@@ -744,11 +784,12 @@ public:
     /** User data for PickingQueryResultCallback */
     struct PickingQuery {
         // note: this is enough to store a std::function<> -- just saying...
-        void* storage[4];
+        void* UTILS_NULLABLE storage[4];
     };
 
     /** callback type used for picking queries. */
-    using PickingQueryResultCallback = void(*)(PickingQueryResult const& result, PickingQuery* pq);
+    using PickingQueryResultCallback =
+            void(*)(PickingQueryResult const& result, PickingQuery* UTILS_NONNULL pq);
 
     /**
      * Helper for creating a picking query from Foo::method, by pointer.
@@ -762,10 +803,10 @@ public:
      * @param handler   Handler to dispatch the callback or nullptr for the default handler.
      */
     template<typename T, void(T::*method)(PickingQueryResult const&)>
-    void pick(uint32_t x, uint32_t y, T* instance, backend::CallbackHandler* handler = nullptr) noexcept {
+    void pick(uint32_t x, uint32_t y, T* UTILS_NONNULL instance,
+            backend::CallbackHandler* UTILS_NULLABLE handler = nullptr) noexcept {
         PickingQuery& query = pick(x, y, [](PickingQueryResult const& result, PickingQuery* pq) {
-            void* user = pq->storage;
-            (*static_cast<T**>(user)->*method)(result);
+            (static_cast<T*>(pq->storage[0])->*method)(result);
         }, handler);
         query.storage[0] = instance;
     }
@@ -782,11 +823,11 @@ public:
      * @param handler   Handler to dispatch the callback or nullptr for the default handler.
      */
     template<typename T, void(T::*method)(PickingQueryResult const&)>
-    void pick(uint32_t x, uint32_t y, T instance, backend::CallbackHandler* handler = nullptr) noexcept {
+    void pick(uint32_t x, uint32_t y, T instance,
+            backend::CallbackHandler* UTILS_NULLABLE handler = nullptr) noexcept {
         static_assert(sizeof(instance) <= sizeof(PickingQuery::storage), "user data too large");
         PickingQuery& query = pick(x, y, [](PickingQueryResult const& result, PickingQuery* pq) {
-            void* user = pq->storage;
-            T* that = static_cast<T*>(user);
+            T* const that = static_cast<T*>(reinterpret_cast<void*>(pq->storage));
             (that->*method)(result);
             that->~T();
         }, handler);
@@ -803,15 +844,15 @@ public:
      * @param handler   Handler to dispatch the callback or nullptr for the default handler.
      */
     template<typename T>
-    void pick(uint32_t x, uint32_t y, T functor, backend::CallbackHandler* handler = nullptr) noexcept {
+    void pick(uint32_t x, uint32_t y, T functor,
+            backend::CallbackHandler* UTILS_NULLABLE handler = nullptr) noexcept {
         static_assert(sizeof(functor) <= sizeof(PickingQuery::storage), "functor too large");
         PickingQuery& query = pick(x, y, handler,
                 (PickingQueryResultCallback)[](PickingQueryResult const& result, PickingQuery* pq) {
-            void* user = pq->storage;
-            T& that = *static_cast<T*>(user);
-            that(result);
-            that.~T();
-        });
+                    T* const that = static_cast<T*>(reinterpret_cast<void*>(pq->storage));
+                    that->operator()(result);
+                    that->~T();
+                });
         new(query.storage) T(std::move(functor));
     }
 
@@ -830,8 +871,9 @@ public:
      *                  8*sizeof(void*) bytes of user data. This user data is later accessible
      *                  in the PickingQueryResultCallback callback 3rd parameter.
      */
-    PickingQuery& pick(uint32_t x, uint32_t y, backend::CallbackHandler* handler,
-            PickingQueryResultCallback callback) noexcept;
+    PickingQuery& pick(uint32_t x, uint32_t y,
+            backend::CallbackHandler* UTILS_NULLABLE handler,
+            PickingQueryResultCallback UTILS_NONNULL callback) noexcept;
 
     /**
      * Set the value of material global variables. There are up-to four such variable each of
@@ -865,6 +907,17 @@ public:
      */
     utils::Entity getFogEntity() const noexcept;
 
+
+    /**
+     * When certain temporal features are used (e.g.: TAA or Screen-space reflections), the view
+     * keeps a history of previous frame renders associated with the Renderer the view was last
+     * used with. When switching Renderer, it may be necessary to clear that history by calling
+     * this method. Similarly, if the whole content of the screen change, like when a cut-scene
+     * starts, clearing the history might be needed to avoid artifacts due to the previous frame
+     * being very different.
+     */
+    void clearFrameHistory(Engine& engine) noexcept;
+
     /**
      * List of available ambient occlusion techniques
      * @deprecated use AmbientOcclusionOptions::enabled instead
@@ -893,6 +946,10 @@ public:
      */
     UTILS_DEPRECATED
     AmbientOcclusion getAmbientOcclusion() const noexcept;
+
+protected:
+    // prevent heap allocation
+    ~View() = default;
 };
 
 } // namespace filament

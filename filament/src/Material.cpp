@@ -16,7 +16,21 @@
 
 #include "details/Material.h"
 
+#include <filament/Material.h>
+#include <filament/MaterialEnums.h>
+
+#include <backend/CallbackHandler.h>
+#include <backend/DriverEnums.h>
+
+#include <utils/Invocable.h>
+
+#include <utility>
+
+#include <stddef.h>
+
 namespace filament {
+
+class MaterialInstance;
 
 using namespace backend;
 
@@ -25,7 +39,7 @@ MaterialInstance* Material::createInstance(const char* name) const noexcept {
 }
 
 const char* Material::getName() const noexcept {
-    return downcast(this)->getName().c_str();
+    return downcast(this)->getName().c_str_safe();
 }
 
 Shading Material::getShading()  const noexcept {
@@ -100,7 +114,7 @@ size_t Material::getParameterCount() const noexcept {
     return downcast(this)->getParameterCount();
 }
 
-size_t Material::getParameters(ParameterInfo* parameters, size_t count) const noexcept {
+size_t Material::getParameters(ParameterInfo* parameters, size_t const count) const noexcept {
     return downcast(this)->getParameters(parameters, count);
 }
 
@@ -120,6 +134,10 @@ ReflectionMode Material::getReflectionMode() const noexcept {
     return downcast(this)->getReflectionMode();
 }
 
+FeatureLevel Material::getFeatureLevel() const noexcept {
+    return downcast(this)->getFeatureLevel();
+}
+
 bool Material::hasParameter(const char* name) const noexcept {
     return downcast(this)->hasParameter(name);
 }
@@ -136,9 +154,13 @@ MaterialInstance const* Material::getDefaultInstance() const noexcept {
     return downcast(this)->getDefaultInstance();
 }
 
-void Material::compile(CompilerPriorityQueue priority, UserVariantFilterMask variantFilter,
-        backend::CallbackHandler* handler, utils::Invocable<void(Material*)>&& callback) noexcept {
-    downcast(this)->compile(priority, variantFilter, handler, std::move(callback));
+void Material::compile(CompilerPriorityQueue const priority, UserVariantFilterMask const variants,
+        CallbackHandler* handler, utils::Invocable<void(Material*)>&& callback) noexcept {
+    downcast(this)->compile(priority, variants, handler, std::move(callback));
+}
+
+UserVariantFilterMask Material::getSupportedVariants() const noexcept {
+    return downcast(this)->getSupportedVariants();
 }
 
 

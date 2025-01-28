@@ -20,11 +20,17 @@
 #include <backend/Platform.h>
 
 #include <bluevk/BlueVK.h>
+
+#include <utils/CString.h>
 #include <utils/FixedCapacityVector.h>
+#include <utils/Hash.h>
 #include <utils/PrivateImplementation.h>
 
 #include <tuple>
 #include <unordered_set>
+
+#include <stddef.h>
+#include <stdint.h>
 
 namespace filament::backend {
 
@@ -40,6 +46,14 @@ struct VulkanPlatformPrivate;
  */
 class VulkanPlatform : public Platform, utils::PrivateImplementation<VulkanPlatformPrivate> {
 public:
+
+    struct ExtensionHashFn {
+        std::size_t operator()(utils::CString const& s) const noexcept {
+            return std::hash<std::string>{}(s.data());
+        }
+    };
+    // Utility for managing device or instance extensions during initialization.
+    using ExtensionSet = std::unordered_set<utils::CString, ExtensionHashFn>;
 
     /**
      * A collection of handles to objects and metadata that comprises a Vulkan context. The client
@@ -74,6 +88,21 @@ public:
         VkFormat colorFormat = VK_FORMAT_UNDEFINED;
         VkFormat depthFormat = VK_FORMAT_UNDEFINED;
         VkExtent2D extent = {0, 0};
+        bool isProtected = false;
+    };
+
+    struct ImageSyncData {
+        static constexpr uint32_t INVALID_IMAGE_INDEX = UINT32_MAX;
+
+        // The index of the next image as returned by vkAcquireNextImage or equivalent.
+        uint32_t imageIndex = INVALID_IMAGE_INDEX;
+
+        // Semaphore to be signaled once the image is available.
+        VkSemaphore imageReadySemaphore = VK_NULL_HANDLE;
+
+        // A function called right before vkQueueSubmit. After this call, the image must be 
+        // available. This pointer can be null if imageReadySemaphore is not VK_NULL_HANDLE.
+        std::function<void(SwapChainPtr handle)> explicitImageReadyWait = nullptr;
     };
 
     VulkanPlatform();
@@ -89,35 +118,49 @@ public:
 
     // ----------------------------------------------------
     // ---------- Platform Customization options ----------
-    /**
-     * The client preference can be stored within the struct.  We allow for two specification of
-     * preference:
-     *     1) A substring to match against `VkPhysicalDeviceProperties.deviceName`.
-     *     2) Index of the device in the list as returned by vkEnumeratePhysicalDevices.
-     */
-    struct GPUPreference {
-        std::string deviceName;
-        int8_t index = -1;
+    struct Customization {
+        /**
+         * The client can specify the GPU (i.e. VkDevice) for the platform. We allow the
+         * following preferences:
+         *     1) A substring to match against `VkPhysicalDeviceProperties.deviceName`. Empty string
+         *        by default.
+         *     2) Index of the device in the list as returned by
+         *        `vkEnumeratePhysicalDevices`. -1 by default to indicate no preference.
+         */
+        struct GPUPreference {
+            utils::CString deviceName;
+            int8_t index = -1;
+        } gpu;
+
+        /**
+         * Whether the platform supports sRGB swapchain. Default is true.
+         */
+        bool isSRGBSwapChainSupported = true;
+
+        /**
+         * When the platform window is resized, we will flush and wait on the command queues
+         * before recreating the swapchain. Default is true.
+         */
+        bool flushAndWaitOnWindowResize = true;
+
+        /**
+         * Whether the swapchain image should be transitioned to a layout suitable for
+         * presentation. Default is true.
+         */
+        bool transitionSwapChainImageLayoutForPresent = true;
     };
 
     /**
-     * Client can provide a preference over the GPU to use in the vulkan instance
-     * @return            `GPUPreference` struct that indicates the client's preference
+     * Client can override to indicate customized behavior or parameter for their platform.
+     * @return            `Customization` struct that indicates the client's platform
+     *                    customizations.
      */
-    virtual GPUPreference getPreferredGPU() noexcept {
+    virtual Customization getCustomization() const noexcept {
         return {};
     }
+
     // -------- End platform customization options --------
     // ----------------------------------------------------
-
-    /**
-     * Returns whether the platform supports sRGB swapchain. This is true by default, and the client
-     * needs to override this method to specify otherwise.
-     * @return            Whether the platform supports sRGB swapchain.
-     */
-    virtual bool isSRGBSwapChainSupported() const {
-        return true;
-    }
 
     /**
      * Get the images handles and format of the memory backing the swapchain. This should be called
@@ -133,13 +176,10 @@ public:
      * corresponding VkImage will be used as the output color attachment. The client should signal
      * the `clientSignal` semaphore when the image is ready to be used by the backend.
      * @param handle         The handle returned by createSwapChain()
-     * @param clientSignal   The semaphore that the client will signal to indicate that the backend
-     *                       may render into the image.
-     * @param index          Pointer to memory that will be filled with the index that corresponding
-     *                       to an image in the `SwapChainBundle.colors` array.
+     * @param outImageSyncData The synchronization data used for image readiness
      * @return               Result of acquire
      */
-    virtual VkResult acquire(SwapChainPtr handle, VkSemaphore clientSignal, uint32_t* index);
+    virtual VkResult acquire(SwapChainPtr handle, ImageSyncData* outImageSyncData);
 
     /**
      * Present the image corresponding to `index` to the display. The client should wait on
@@ -161,6 +201,13 @@ public:
     virtual bool hasResized(SwapChainPtr handle);
 
     /**
+     * Check if the surface is protected.
+     * @param handle             The handle returned by createSwapChain()
+     * @return                   Whether the swapchain is protected
+     */
+    virtual bool isProtected(SwapChainPtr handle);
+
+    /**
      * Carry out a recreation of the swapchain.
      * @param handle             The handle returned by createSwapChain()
      * @return                   Result of the recreation
@@ -177,6 +224,13 @@ public:
      */
     virtual SwapChainPtr createSwapChain(void* nativeWindow, uint64_t flags = 0,
             VkExtent2D extent = {0, 0});
+
+    /**
+     * Allows implementers to provide instance extensions that they'd like to include in the
+     * instance creation.
+     * @return          A set of extensions to enable for the instance.
+     */
+    virtual ExtensionSet getRequiredInstanceExtensions() { return {}; }
 
     /**
      * Destroy the swapchain.
@@ -221,11 +275,83 @@ public:
      */
     VkQueue getGraphicsQueue() const noexcept;
 
-private:
-    // Platform dependent helper methods
-    using ExtensionSet = std::unordered_set<std::string_view>;
-    static ExtensionSet getRequiredInstanceExtensions();
+    /**
+    * @return The family index of the protected graphics queue selected for the
+    *          Vulkan backend.
+    */
+    uint32_t getProtectedGraphicsQueueFamilyIndex() const noexcept;
 
+    /**
+     * @return The index of the protected graphics queue (if there are multiple
+     *          graphics queues) selected for the Vulkan backend.
+     */
+    uint32_t getProtectedGraphicsQueueIndex() const noexcept;
+
+    /**
+     * @return The protected queue that was selected for the Vulkan backend.
+     */
+    VkQueue getProtectedGraphicsQueue() const noexcept;
+
+    struct ExternalImageMetadata {
+        /**
+         * The width of the external image
+         */
+        uint32_t width;
+
+        /**
+         * The height of the external image
+         */
+        uint32_t height;
+
+        /**
+         * The layer count of the external image
+         */
+        uint32_t layers;
+
+        /**
+         * The format of the external image
+         */
+        VkFormat format;
+
+        /**
+         * An external buffer can be protected. This tells you if it is.
+         */
+        bool isProtected;
+
+        /**
+         * The type of external format (opaque int) if used.
+         */
+        uint64_t externalFormat;
+
+        /**
+         * Image usage
+         */
+        VkImageUsageFlags usage;
+
+        /**
+         * Allocation size
+         */
+        VkDeviceSize allocationSize;
+
+        /**
+         * Heap information
+         */
+        uint32_t memoryTypeBits;
+    };
+    virtual ExternalImageMetadata getExternalImageMetadata(void* externalImage);
+
+    using ImageData = std::pair<VkImage, VkDeviceMemory>;
+    virtual ImageData createExternalImage(void* externalImage,
+            const ExternalImageMetadata& metadata);
+
+private:
+    static ExtensionSet getSwapchainInstanceExtensions();
+    static ExternalImageMetadata getExternalImageMetadataImpl(void* externalImage,
+            VkDevice device);
+    static ImageData createExternalImageImpl(void* externalImage, VkDevice device,
+            const VkAllocationCallbacks* allocator, const ExternalImageMetadata& metadata);
+
+    // Platform dependent helper methods
     using SurfaceBundle = std::tuple<VkSurfaceKHR, VkExtent2D>;
     static SurfaceBundle createVkSurfaceKHR(void* nativeWindow, VkInstance instance,
             uint64_t flags) noexcept;

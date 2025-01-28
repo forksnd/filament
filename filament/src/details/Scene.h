@@ -22,6 +22,8 @@
 #include "Allocators.h"
 #include "Culler.h"
 
+#include "ds/DescriptorSet.h"
+
 #include "components/LightManager.h"
 #include "components/RenderableManager.h"
 #include "components/TransformManager.h"
@@ -30,6 +32,8 @@
 
 #include <filament/Box.h>
 #include <filament/Scene.h>
+
+#include <math/mathfwd.h>
 
 #include <utils/compiler.h>
 #include <utils/Entity.h>
@@ -55,7 +59,7 @@ class FSkybox;
 class FScene : public Scene {
 public:
     /*
-     * Filaments-scope Public API
+     * Filament-scope Public API
      */
 
     FSkybox* getSkybox() const noexcept { return mSkybox; }
@@ -70,17 +74,13 @@ public:
     ~FScene() noexcept;
     void terminate(FEngine& engine);
 
-    void prepare(utils::JobSystem& js, LinearAllocatorArena& allocator,
-            math::mat4 const& worldOriginTransform, bool shadowReceiversAreCasters) noexcept;
+    void prepare(utils::JobSystem& js, RootArenaScope& rootArenaScope,
+            math::mat4 const& worldTransform, bool shadowReceiversAreCasters) noexcept;
 
     void prepareVisibleRenderables(utils::Range<uint32_t> visibleRenderables) noexcept;
 
-    void prepareDynamicLights(const CameraInfo& camera, ArenaScope& arena,
+    void prepareDynamicLights(const CameraInfo& camera,
             backend::Handle<backend::HwBufferObject> lightUbh) noexcept;
-
-    backend::Handle<backend::HwBufferObject> getRenderableUBO() const noexcept {
-        return mRenderableViewUbh;
-    }
 
     /*
      * Storage for per-frame renderable data
@@ -92,7 +92,7 @@ public:
         RENDERABLE_INSTANCE,    //   4 | instance of the Renderable component
         WORLD_TRANSFORM,        //  16 | instance of the Transform component
         VISIBILITY_STATE,       //   2 | visibility data of the component
-        SKINNING_BUFFER,        //   8 | bones uniform buffer handle, offset
+        SKINNING_BUFFER,        //   8 | bones uniform buffer handle, offset, indices and weights
         MORPHING_BUFFER,        //  16 | weights uniform buffer handle, count, morph targets
         INSTANCES,              //  16 | instancing info for this Renderable
         WORLD_AABB_CENTER,      //  12 | world-space bounding box center of the renderable
@@ -107,6 +107,7 @@ public:
         PRIMITIVES,             //   8 | level-of-detail'ed primitives
         SUMMED_PRIMITIVE_COUNT, //   4 | summed visible primitive counts
         UBO,                    // 128 |
+        DESCRIPTOR_SET_HANDLE,
 
         // FIXME: We need a better way to handle this
         USER_DATA,              //   4 | user data currently used to store the scale
@@ -127,6 +128,7 @@ public:
             utils::Slice<FRenderPrimitive>,             // PRIMITIVES
             uint32_t,                                   // SUMMED_PRIMITIVE_COUNT
             PerRenderableData,                          // UBO
+            backend::DescriptorSetHandle,               // DESCRIPTOR_SET_HANDLE
             // FIXME: We need a better way to handle this
             float                                       // USER_DATA
     >;
@@ -135,13 +137,13 @@ public:
     RenderableSoa& getRenderableData() noexcept { return mRenderableData; }
 
     static inline uint32_t getPrimitiveCount(RenderableSoa const& soa,
-            uint32_t first, uint32_t last) noexcept {
+            uint32_t const first, uint32_t const last) noexcept {
         // the caller must guarantee that last is dereferenceable
         return soa.elementAt<SUMMED_PRIMITIVE_COUNT>(last) -
                 soa.elementAt<SUMMED_PRIMITIVE_COUNT>(first);
     }
 
-    static inline uint32_t getPrimitiveCount(RenderableSoa const& soa, uint32_t last) noexcept {
+    static inline uint32_t getPrimitiveCount(RenderableSoa const& soa, uint32_t const last) noexcept {
         // the caller must guarantee that last is dereferenceable
         return soa.elementAt<SUMMED_PRIMITIVE_COUNT>(last);
     }
@@ -162,6 +164,8 @@ public:
     enum {
         POSITION_RADIUS,
         DIRECTION,
+        SHADOW_DIRECTION,
+        SHADOW_REF,
         LIGHT_INSTANCE,
         VISIBILITY,
         SCREEN_SPACE_Z_RANGE,
@@ -171,6 +175,8 @@ public:
     using LightSoa = utils::StructureOfArrays<
             math::float4,
             math::float3,
+            math::float3,
+            math::double2,
             FLightManager::Instance,
             Culler::result_type,
             math::float2,
@@ -193,6 +199,7 @@ private:
     void addEntities(const utils::Entity* entities, size_t count);
     void remove(utils::Entity entity);
     void removeEntities(const utils::Entity* entities, size_t count);
+    size_t getEntityCount() const noexcept { return mEntities.size(); }
     size_t getRenderableCount() const noexcept;
     size_t getLightCount() const noexcept;
     bool hasEntity(utils::Entity entity) const noexcept;
@@ -221,7 +228,6 @@ private:
      */
     RenderableSoa mRenderableData;
     LightSoa mLightData;
-    backend::Handle<backend::HwBufferObject> mRenderableViewUbh; // This is actually owned by the view.
     bool mHasContactShadows = false;
 
     // State shared between Scene and driver callbacks.

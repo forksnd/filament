@@ -86,7 +86,9 @@ static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, ToneMapp
     else if (0 == compare(tokens[i], jsonChunk, "ACES_LEGACY")) { *out = ToneMapping::ACES_LEGACY; }
     else if (0 == compare(tokens[i], jsonChunk, "ACES")) { *out = ToneMapping::ACES; }
     else if (0 == compare(tokens[i], jsonChunk, "FILMIC")) { *out = ToneMapping::FILMIC; }
+    else if (0 == compare(tokens[i], jsonChunk, "AGX")) { *out = ToneMapping::AGX; }
     else if (0 == compare(tokens[i], jsonChunk, "GENERIC")) { *out = ToneMapping::GENERIC; }
+    else if (0 == compare(tokens[i], jsonChunk, "PBR_NEUTRAL")) { *out = ToneMapping::PBR_NEUTRAL; }
     else if (0 == compare(tokens[i], jsonChunk, "DISPLAY_RANGE")) { *out = ToneMapping::DISPLAY_RANGE; }
     else {
         slog.w << "Invalid ToneMapping: '" << STR(tokens[i], jsonChunk) << "'" << io::endl;
@@ -130,6 +132,36 @@ static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, GenericT
     return i;
 }
 
+static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, AgxToneMapper::AgxLook* out) {
+    if (0 == compare(tokens[i], jsonChunk, "NONE")) { *out = AgxToneMapper::AgxLook::NONE; }
+    else if (0 == compare(tokens[i], jsonChunk, "PUNCHY")) { *out = AgxToneMapper::AgxLook::PUNCHY; }
+    else if (0 == compare(tokens[i], jsonChunk, "GOLDEN")) { *out = AgxToneMapper::AgxLook::GOLDEN; }
+    else {
+        slog.w << "Invalid AgxLook: '" << STR(tokens[i], jsonChunk) << "'" << io::endl;
+    }
+    return i + 1;
+}
+
+static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, AgxToneMapperSettings* out) {
+    CHECK_TOKTYPE(tokens[i], JSMN_OBJECT);
+    int size = tokens[i++].size;
+    for (int j = 0; j < size; ++j) {
+        const jsmntok_t tok = tokens[i];
+        CHECK_KEY(tok);
+        if (compare(tok, jsonChunk, "look") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->look);
+        } else {
+            slog.w << "Invalid AgX tone mapper key: '" << STR(tok, jsonChunk) << "'" << io::endl;
+            i = parse(tokens, i + 1);
+        }
+        if (i < 0) {
+            slog.e << "Invalid AgX tone mapper value: '" << STR(tok, jsonChunk) << "'" << io::endl;
+            return i;
+        }
+    }
+    return i;
+}
+
 static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, ColorGradingSettings* out) {
     CHECK_TOKTYPE(tokens[i], JSMN_OBJECT);
     int size = tokens[i++].size;
@@ -146,6 +178,8 @@ static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, ColorGra
             i = parse(tokens, i + 1, jsonChunk, &out->toneMapping);
         } else if (compare(tok, jsonChunk, "genericToneMapper") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->genericToneMapper);
+        } else if (compare(tok, jsonChunk, "agxToneMapper") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->agxToneMapper);
         } else if (compare(tok, jsonChunk, "luminanceScaling") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->luminanceScaling);
         } else if (compare(tok, jsonChunk, "gamutMapping") == 0) {
@@ -269,6 +303,8 @@ static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, ViewSett
             i = parse(tokens, i + 1, jsonChunk, &out->vsmShadowOptions);
         } else if (compare(tok, jsonChunk, "postProcessingEnabled") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->postProcessingEnabled);
+        } else if (compare(tok, jsonChunk, "stereoscopicOptions") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->stereoscopicOptions);
         } else {
             slog.w << "Invalid view setting key: '" << STR(tok, jsonChunk) << "'" << io::endl;
             i = parse(tokens, i + 1);
@@ -376,21 +412,30 @@ static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk,
             out->cascadeSplitPositions[0] = splitsVector[0];
             out->cascadeSplitPositions[1] = splitsVector[1];
             out->cascadeSplitPositions[2] = splitsVector[2];
-        // TODO: constantBias
-        // TODO: normalBias
-        // TODO: shadowFar
-        // TODO: shadowNearHint
-        // TODO: shadowFarHint
+        } else if (compare(tok, jsonChunk, "constantBias") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->constantBias);
+        } else if (compare(tok, jsonChunk, "normalBias") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->normalBias);
+        } else if (compare(tok, jsonChunk, "shadowFar") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->shadowFar);
+        } else if (compare(tok, jsonChunk, "shadowNearHint") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->shadowNearHint);
+        } else if (compare(tok, jsonChunk, "shadowFarHint") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->shadowFarHint);
         } else if (compare(tok, jsonChunk, "stable") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->stable);
         } else if (compare(tok, jsonChunk, "lispsm") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->lispsm);
-        // TODO: polygonOffsetConstant
-        // TODO: polygonOffsetSlope
+        } else if (compare(tok, jsonChunk, "polygonOffsetConstant") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->polygonOffsetConstant);
+        } else if (compare(tok, jsonChunk, "polygonOffsetSlope") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->polygonOffsetSlope);
         } else if (compare(tok, jsonChunk, "screenSpaceContactShadows") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->screenSpaceContactShadows);
-        // TODO: stepCount
-        // TODO: maxShadowDistance
+        } else if (compare(tok, jsonChunk, "stepCount") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->stepCount);
+        } else if (compare(tok, jsonChunk, "maxShadowDistance") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->maxShadowDistance);
         } else if (compare(tok, jsonChunk, "vsm") == 0) {
             i = parse(tokens, i + 1, jsonChunk, &out->vsm);
         } else if (compare(tok, jsonChunk, "shadowBulbRadius") == 0) {
@@ -467,6 +512,10 @@ static int parse(jsmntok_t const* tokens, int i, const char* jsonChunk, ViewerOp
              i = parse(tokens, i + 1, jsonChunk, &out->cameraNear);
         } else if (compare(tok, jsonChunk, "cameraFar") == 0) {
              i = parse(tokens, i + 1, jsonChunk, &out->cameraFar);
+        } else if (compare(tok, jsonChunk, "cameraEyeOcularDistance") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->cameraEyeOcularDistance);
+        } else if (compare(tok, jsonChunk, "cameraEyeToeIn") == 0) {
+            i = parse(tokens, i + 1, jsonChunk, &out->cameraEyeToeIn);
         } else if (compare(tok, jsonChunk, "groundShadowStrength") == 0) {
              i = parse(tokens, i + 1, jsonChunk, &out->groundShadowStrength);
         } else if (compare(tok, jsonChunk, "groundPlaneEnabled") == 0) {
@@ -539,6 +588,7 @@ void applySettings(Engine* engine, const ViewSettings& settings, View* dest) {
     dest->setShadowType(settings.shadowType);
     dest->setVsmShadowOptions(settings.vsmShadowOptions);
     dest->setGuardBandOptions(settings.guardBand);
+    dest->setStereoscopicOptions(settings.stereoscopicOptions);
     dest->setPostProcessingEnabled(settings.postProcessingEnabled);
 }
 
@@ -579,8 +629,10 @@ void applySettings(Engine* engine, const LightSettings& settings, IndirectLight*
     }
     for (size_t i = 0; i < sceneLightCount; i++) {
         auto const li = lm->getInstance(sceneLights[i]);
-        lm->setShadowCaster(li, settings.enableShadows);
-        lm->setShadowOptions(li, settings.shadowOptions);
+        if (li) {
+            lm->setShadowCaster(li, settings.enableShadows);
+            lm->setShadowOptions(li, settings.shadowOptions);
+        }
     }
     view->setSoftShadowOptions(settings.softShadowOptions);
 }
@@ -611,6 +663,22 @@ void applySettings(Engine* engine, const ViewerOptions& settings, Camera* camera
         camera->setFocusDistance(settings.cameraFocusDistance);
     }
     engine->setAutomaticInstancingEnabled(settings.autoInstancingEnabled);
+
+    // Eyes are rendered from left-to-right, i.e., eye 0 is rendered to the left side of the
+    // window.
+    // For testing, we want to render a side-by-side layout so users can view with
+    // "cross-eyed" stereo.
+    // For cross-eyed stereo, Eye 0 is really the RIGHT eye, while Eye 1 is the LEFT eye.
+    const auto od = settings.cameraEyeOcularDistance;
+    const auto toeIn = settings.cameraEyeToeIn;
+    const auto eyeCount = engine->getConfig().stereoscopicEyeCount;
+    const double3 up = double3(0.0, 1.0, 0.0);
+    const mat4 rightEye = mat4::translation(double3{ od, 0.0, 0.0}) * mat4::rotation( toeIn, up);
+    const mat4 leftEye  = mat4::translation(double3{-od, 0.0, 0.0}) * mat4::rotation(-toeIn, up);
+    const mat4 modelMatrices[2] = { rightEye, leftEye };
+    for (int i = 0; i < eyeCount; i++) {
+        camera->setEyeModelMatrix(i, modelMatrices[i % 2]);
+    }
 }
 
 constexpr ToneMapper* createToneMapper(const ColorGradingSettings& settings) noexcept {
@@ -619,12 +687,14 @@ constexpr ToneMapper* createToneMapper(const ColorGradingSettings& settings) noe
         case ToneMapping::ACES_LEGACY: return new ACESLegacyToneMapper;
         case ToneMapping::ACES: return new ACESToneMapper;
         case ToneMapping::FILMIC: return new FilmicToneMapper;
+        case ToneMapping::AGX: return new AgxToneMapper(settings.agxToneMapper.look);
         case ToneMapping::GENERIC: return new GenericToneMapper(
-                    settings.genericToneMapper.contrast,
-                    settings.genericToneMapper.midGrayIn,
-                    settings.genericToneMapper.midGrayOut,
-                    settings.genericToneMapper.hdrMax
+                settings.genericToneMapper.contrast,
+                settings.genericToneMapper.midGrayIn,
+                settings.genericToneMapper.midGrayOut,
+                settings.genericToneMapper.hdrMax
         );
+        case ToneMapping::PBR_NEUTRAL: return new PBRNeutralToneMapper;
         case ToneMapping::DISPLAY_RANGE: return new DisplayRangeToneMapper;
     }
 }
@@ -673,7 +743,9 @@ static std::ostream& operator<<(std::ostream& out, ToneMapping in) {
         case ToneMapping::ACES_LEGACY: return out << "\"ACES_LEGACY\"";
         case ToneMapping::ACES: return out << "\"ACES\"";
         case ToneMapping::FILMIC: return out << "\"FILMIC\"";
+        case ToneMapping::AGX: return out << "\"AGX\"";
         case ToneMapping::GENERIC: return out << "\"GENERIC\"";
+        case ToneMapping::PBR_NEUTRAL: return out << "\"PBR_NEUTRAL\"";
         case ToneMapping::DISPLAY_RANGE: return out << "\"DISPLAY_RANGE\"";
     }
     return out << "\"INVALID\"";
@@ -688,6 +760,21 @@ static std::ostream& operator<<(std::ostream& out, const GenericToneMapperSettin
        << "}";
 }
 
+static std::ostream& operator<<(std::ostream& out, AgxToneMapper::AgxLook in) {
+    switch (in) {
+        case AgxToneMapper::AgxLook::NONE: return out << "\"NONE\"";
+        case AgxToneMapper::AgxLook::PUNCHY: return out << "\"PUNCHY\"";
+        case AgxToneMapper::AgxLook::GOLDEN: return out << "\"GOLDEN\"";
+    }
+    return out << "\"INVALID\"";
+}
+
+static std::ostream& operator<<(std::ostream& out, const AgxToneMapperSettings& in) {
+    return out << "{\n"
+               << "\"look\": " << (in.look) << ",\n"
+               << "}";
+}
+
 static std::ostream& operator<<(std::ostream& out, const ColorGradingSettings& in) {
     return out << "{\n"
         << "\"enabled\": " << to_string(in.enabled) << ",\n"
@@ -695,6 +782,7 @@ static std::ostream& operator<<(std::ostream& out, const ColorGradingSettings& i
         << "\"quality\": " << (in.quality) << ",\n"
         << "\"toneMapping\": " << (in.toneMapping) << ",\n"
         << "\"genericToneMapper\": " << (in.genericToneMapper) << ",\n"
+        << "\"agxToneMapper\": " << (in.agxToneMapper) << ",\n"
         << "\"luminanceScaling\": " << to_string(in.luminanceScaling) << ",\n"
         << "\"gamutMapping\": " << to_string(in.gamutMapping) << ",\n"
         << "\"exposure\": " << (in.exposure) << ",\n"
@@ -731,10 +819,19 @@ static std::ostream& operator<<(std::ostream& out, const LightManager::ShadowOpt
         << "},\n"
         << "\"mapSize\": " << in.mapSize << ",\n"
         << "\"shadowCascades\": " << int(in.shadowCascades) << ",\n"
-        << "\"cascadeSplitPositions\": " << (splitsVector) << "\n"
+        << "\"cascadeSplitPositions\": " << splitsVector << "\n"
+        << "\"constantBias\": " << in.constantBias << ",\n"
+        << "\"normalBias\": " << in.normalBias << ",\n"
+        << "\"shadowFar\": " << in.shadowFar << ",\n"
+        << "\"shadowNearHint\": " << in.shadowNearHint << ",\n"
+        << "\"shadowFarHint\": " << in.shadowFarHint << ",\n"
         << "\"stable\": " << to_string(in.stable) << ",\n"
         << "\"lispsm\": " << to_string(in.lispsm) << ",\n"
+        << "\"polygonOffsetConstant\": " << in.polygonOffsetConstant << ",\n"
+        << "\"polygonOffsetSlope\": " << in.polygonOffsetSlope << ",\n"
         << "\"screenSpaceContactShadows\": " << to_string(in.screenSpaceContactShadows) << ",\n"
+        << "\"stepCount\": " << +in.stepCount << ",\n"
+        << "\"maxShadowDistance\": " << in.maxShadowDistance << ",\n"
         << "\"shadowBulbRadius\": " << in.shadowBulbRadius << ",\n"
         << "\"transform\": " << in.transform.xyzw << ",\n"
         << "}";
@@ -804,6 +901,8 @@ static std::ostream& operator<<(std::ostream& out, const ViewerOptions& in) {
         << "\"cameraISO\": " << (in.cameraISO) << ",\n"
         << "\"cameraNear\": " << (in.cameraNear) << ",\n"
         << "\"cameraFar\": " << (in.cameraFar) << ",\n"
+        << "\"cameraEyeOcularDistance\": " << (in.cameraEyeOcularDistance) << ",\n"
+        << "\"cameraEyeToeIn\": " << (in.cameraEyeToeIn) << ",\n"
         << "\"groundShadowStrength\": " << (in.groundShadowStrength) << ",\n"
         << "\"groundPlaneEnabled\": " << to_string(in.groundPlaneEnabled) << ",\n"
         << "\"skyboxEnabled\": " << to_string(in.skyboxEnabled) << ",\n"
@@ -841,6 +940,7 @@ static std::ostream& operator<<(std::ostream& out, const ViewSettings& in) {
         << "\"shadowType\": " << (in.shadowType) << ",\n"
         << "\"vsmShadowOptions\": " << (in.vsmShadowOptions) << ",\n"
         << "\"guardBand\": " << (in.guardBand) << ",\n"
+        << "\"stereoscopicOptions\": " << (in.stereoscopicOptions) << ",\n"
         << "\"postProcessingEnabled\": " << to_string(in.postProcessingEnabled) << "\n"
         << "}";
 }
@@ -854,7 +954,7 @@ static std::ostream& operator<<(std::ostream& out, const Settings& in) {
         << "}";
 }
 
-bool GenericToneMapperSettings::operator==(const GenericToneMapperSettings &rhs) const {
+bool GenericToneMapperSettings::operator==(const GenericToneMapperSettings& rhs) const {
     static_assert(sizeof(GenericToneMapperSettings) == 16, "Please update Settings.cpp");
     return contrast == rhs.contrast &&
            midGrayIn == rhs.midGrayIn &&
@@ -862,7 +962,12 @@ bool GenericToneMapperSettings::operator==(const GenericToneMapperSettings &rhs)
            hdrMax == rhs.hdrMax;
 }
 
-bool ColorGradingSettings::operator==(const ColorGradingSettings &rhs) const {
+bool AgxToneMapperSettings::operator==(const AgxToneMapperSettings& rhs) const {
+    static_assert(sizeof(AgxToneMapperSettings) == 1, "Please update Settings.cpp");
+    return look == rhs.look;
+}
+
+bool ColorGradingSettings::operator==(const ColorGradingSettings& rhs) const {
     // If you had to fix the following codeline, then you likely also need to update the
     // implementation of operator==.
     static_assert(sizeof(ColorGradingSettings) == 312, "Please update Settings.cpp");
@@ -871,6 +976,7 @@ bool ColorGradingSettings::operator==(const ColorGradingSettings &rhs) const {
             quality == rhs.quality &&
             toneMapping == rhs.toneMapping &&
             genericToneMapper == rhs.genericToneMapper &&
+            agxToneMapper == rhs.agxToneMapper &&
             luminanceScaling == rhs.luminanceScaling &&
             gamutMapping == rhs.gamutMapping &&
             exposure == rhs.exposure &&

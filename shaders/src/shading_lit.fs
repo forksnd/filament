@@ -3,11 +3,6 @@
 //------------------------------------------------------------------------------
 
 #if defined(BLEND_MODE_MASKED)
-float computeMaskedAlpha(float a) {
-    // Use derivatives to smooth alpha tested edges
-    return (a - getMaskThreshold()) / max(fwidth(a), 1e-3) + 0.5;
-}
-
 float computeDiffuseAlpha(float a) {
     // If we reach this point in the code, we already know that the fragment is not discarded due
     // to the threshold factor. Therefore we can just output 1.0, which prevents a "punch through"
@@ -15,14 +10,6 @@ float computeDiffuseAlpha(float a) {
     // of ALPHA_TO_COVERAGE.
     return (frameUniforms.needsAlphaChannel == 1.0) ? 1.0 : a;
 }
-
-void applyAlphaMask(inout vec4 baseColor) {
-    baseColor.a = computeMaskedAlpha(baseColor.a);
-    if (baseColor.a <= 0.0) {
-        discard;
-    }
-}
-
 #else // not masked
 
 float computeDiffuseAlpha(float a) {
@@ -32,9 +19,6 @@ float computeDiffuseAlpha(float a) {
     return 1.0;
 #endif
 }
-
-void applyAlphaMask(inout vec4 baseColor) {}
-
 #endif
 
 #if defined(GEOMETRIC_SPECULAR_AA)
@@ -53,8 +37,11 @@ float normalFiltering(float perceptualRoughness, const vec3 worldNormal) {
     vec3 du = dFdx(worldNormal);
     vec3 dv = dFdy(worldNormal);
 
-    float variance = materialParams._specularAntiAliasingVariance * (dot(du, du) + dot(dv, dv));
+    // specular AA factor to correct for resolution scaling (DSR and TAAx4)
+    du *= frameUniforms.derivativesScale.x;
+    dv *= frameUniforms.derivativesScale.y;
 
+    float variance = materialParams._specularAntiAliasingVariance * (dot(du, du) + dot(dv, dv));
     float roughness = perceptualRoughnessToRoughness(perceptualRoughness);
     float kernelRoughness = min(2.0 * variance, materialParams._specularAntiAliasingThreshold);
     float squareRoughness = saturate(roughness * roughness + kernelRoughness);
@@ -65,7 +52,6 @@ float normalFiltering(float perceptualRoughness, const vec3 worldNormal) {
 
 void getCommonPixelParams(const MaterialInputs material, inout PixelParams pixel) {
     vec4 baseColor = material.baseColor;
-    applyAlphaMask(baseColor);
 
 #if defined(BLEND_MODE_FADE) && !defined(SHADING_MODEL_UNLIT)
     // Since we work in premultiplied alpha mode, we need to un-premultiply
@@ -89,7 +75,21 @@ void getCommonPixelParams(const MaterialInputs material, inout PixelParams pixel
     // Assumes an interface from air to an IOR of 1.5 for dielectrics
     float reflectance = computeDielectricF0(material.reflectance);
 #endif
+#if !defined(MATERIAL_HAS_SPECULAR_FACTOR) && !defined(MATERIAL_HAS_SPECULAR_COLOR_FACTOR)
     pixel.f0 = computeF0(baseColor, material.metallic, reflectance);
+#else
+    vec3 dielectricSpecularF0 = vec3(0.0);
+    float dielectricSpecularF90 = 0.0;
+#if defined(MATERIAL_HAS_SPECULAR_COLOR_FACTOR)
+    dielectricSpecularF0 = min(reflectance * material.specularColorFactor, vec3(1.0));
+#endif
+#if defined(MATERIAL_HAS_SPECULAR_FACTOR)
+    dielectricSpecularF0 *= material.specularFactor;
+    dielectricSpecularF90 = material.specularFactor;
+#endif
+    pixel.f0 = baseColor.rgb * material.metallic + dielectricSpecularF0 * (1.0 - material.metallic);
+    pixel.f90 = material.metallic + dielectricSpecularF90 * (1.0 - material.metallic);
+#endif
 #else
     pixel.diffuseColor = baseColor.rgb;
     pixel.f0 = material.sheenColor;
@@ -134,6 +134,16 @@ void getCommonPixelParams(const MaterialInputs material, inout PixelParams pixel
     pixel.uThickness = 0.0;
 #endif
 #endif
+#endif
+}
+
+void getSpecularPixelParams(const MaterialInputs material, inout PixelParams pixel) {
+#if defined(MATERIAL_HAS_SPECULAR_FACTOR)
+    pixel.specular = material.specularFactor;
+#endif
+
+#if defined(MATERIAL_HAS_SPECULAR_COLOR_FACTOR)
+    pixel.specularColor = material.specularColorFactor;
 #endif
 }
 
@@ -246,6 +256,7 @@ void getEnergyCompensationPixelParams(inout PixelParams pixel) {
  * testing fails.
  */
 void getPixelParams(const MaterialInputs material, out PixelParams pixel) {
+    getSpecularPixelParams(material, pixel);
     getCommonPixelParams(material, pixel);
     getSheenPixelParams(material, pixel);
     getClearCoatPixelParams(material, pixel);

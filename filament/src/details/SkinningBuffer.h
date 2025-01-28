@@ -17,15 +17,23 @@
 #ifndef TNT_FILAMENT_DETAILS_SKINNINGBUFFER_H
 #define TNT_FILAMENT_DETAILS_SKINNINGBUFFER_H
 
-#include "downcast.h"
 #include <filament/SkinningBuffer.h>
 
-#include "private/filament/EngineEnums.h"
-#include "private/filament/UibStructs.h"
+#include "downcast.h"
 
+#include <private/filament/EngineEnums.h>
+#include <private/filament/UibStructs.h>
+
+#include <backend/DriverApiForward.h>
 #include <backend/Handle.h>
 
-#include <utils/compiler.h>
+#include <utils/FixedCapacityVector.h>
+
+#include <math/mat4.h>
+#include <math/vec2.h>
+
+#include <stddef.h>
+#include <stdint.h>
 
 // for gtest
 class FilamentTest_Bones_Test;
@@ -47,13 +55,13 @@ public:
     size_t getBoneCount() const noexcept { return mBoneCount; }
 
     // round count to the size of the UBO in the shader
-    static size_t getPhysicalBoneCount(size_t count) noexcept {
+    static size_t getPhysicalBoneCount(size_t const count) noexcept {
         static_assert((CONFIG_MAX_BONE_COUNT & (CONFIG_MAX_BONE_COUNT - 1)) == 0);
         return (count + CONFIG_MAX_BONE_COUNT - 1) & ~(CONFIG_MAX_BONE_COUNT - 1);
     }
 
 private:
-    friend class ::FilamentTest_Bones_Test;
+    friend class FilamentTest_Bones_Test;
     friend class SkinningBuffer;
     friend class FRenderableManager;
 
@@ -68,6 +76,13 @@ private:
     backend::Handle<backend::HwBufferObject> getHwHandle() const noexcept {
         return mHandle;
     }
+
+    static backend::TextureHandle createIndicesAndWeightsHandle(FEngine& engine, size_t count);
+
+    static void setIndicesAndWeightsData(FEngine& engine,
+          backend::Handle<backend::HwTexture> textureHandle,
+          const utils::FixedCapacityVector<math::float2>& pairs,
+          size_t count);
 
     backend::Handle<backend::HwBufferObject> mHandle;
     uint32_t mBoneCount;

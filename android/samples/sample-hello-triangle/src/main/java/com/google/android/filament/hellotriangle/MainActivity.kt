@@ -20,6 +20,8 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.opengl.Matrix
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Choreographer
 import android.view.Surface
 import android.view.SurfaceView
@@ -110,7 +112,13 @@ class MainActivity : Activity() {
     }
 
     private fun setupFilament() {
-        engine = Engine.create()
+        val config = Engine.Config()
+        //config.forceGLES2Context = true
+
+        engine = Engine.Builder()
+            .config(config)
+            .featureLevel(Engine.FeatureLevel.FEATURE_LEVEL_0)
+            .build()
         renderer = engine.createRenderer()
         scene = engine.createScene()
         view = engine.createView()
@@ -120,12 +128,9 @@ class MainActivity : Activity() {
     private fun setupView() {
         scene.skybox = Skybox.Builder().color(0.035f, 0.035f, 0.035f, 1.0f).build(engine)
 
+        // post-processing is not supported at feature level 0
         if (engine.activeFeatureLevel == Engine.FeatureLevel.FEATURE_LEVEL_0) {
-            // post-processing is not supported at feature level 0
             view.isPostProcessingEnabled = false
-        } else {
-            // NOTE: Try to disable post-processing (tone-mapping, etc.) to see the difference
-            // view.isPostProcessingEnabled = false
         }
 
         // Tell the view which camera we want to use
@@ -160,12 +165,16 @@ class MainActivity : Activity() {
     }
 
     private fun loadMaterial() {
-        var name = "materials/baked_color.filamat"
-        if (engine.activeFeatureLevel == Engine.FeatureLevel.FEATURE_LEVEL_0) {
-            name = "materials/baked_color_es2.filamat"
-        }
-        readUncompressedAsset(name).let {
+        readUncompressedAsset("materials/baked_color.filamat").let {
             material = Material.Builder().payload(it, it.remaining()).build(engine)
+            material.compile(
+                Material.CompilerPriorityQueue.HIGH,
+                Material.UserVariantFilterBit.ALL,
+                Handler(Looper.getMainLooper())) {
+                        android.util.Log.i("hellotriangle",
+                            "Material " + material.name + " compiled.")
+            }
+            engine.flush()
         }
     }
 
@@ -320,7 +329,7 @@ class MainActivity : Activity() {
             var flags = uiHelper.swapChainFlags
             if (engine.activeFeatureLevel == Engine.FeatureLevel.FEATURE_LEVEL_0) {
                 if (SwapChain.isSRGBSwapChainSupported(engine)) {
-                    flags = flags or SwapChain.CONFIG_SRGB_COLORSPACE
+                    flags = flags or SwapChainFlags.CONFIG_SRGB_COLORSPACE
                 }
             }
 

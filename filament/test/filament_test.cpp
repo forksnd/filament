@@ -179,6 +179,23 @@ TEST(FilamentTest, SkinningMath) {
     }
 }
 
+TEST(FilamentTest, TransformManagerSimple) {
+    filament::FTransformManager tcm;
+    EntityManager& em = EntityManager::get();
+    Entity root = em.create();
+    tcm.create(root);
+
+    auto ti = tcm.getInstance(root);
+
+    auto t = mat4f::translation(float3{ 1, 2, 3 });
+    auto prev = tcm.getWorldTransform(ti);
+    tcm.setTransform(ti, t);
+    auto updated = tcm.getWorldTransform(ti);
+
+    EXPECT_NE(prev, t);
+    EXPECT_EQ(updated, t);
+}
+
 TEST(FilamentTest, TransformManager) {
     filament::FTransformManager tcm;
     tcm.setAccurateTranslationsEnabled(true);
@@ -702,8 +719,8 @@ TEST(FilamentTest, FroxelData) {
     LightManager::Instance instance = engine->getLightManager().getInstance(e);
 
     FScene::LightSoa lights;
-    lights.push_back({}, {}, {}, {}, {}, {});   // first one is always skipped
-    lights.push_back(float4{ 0, 0, -5, 1 }, {}, instance, 1, {}, {});
+    lights.push_back({}, {}, {}, {}, {}, {}, {}, {});   // first one is always skipped
+    lights.push_back(float4{ 0, 0, -5, 1 }, {}, {}, {}, instance, 1, {}, {});
 
     {
         froxelData.froxelizeLights(*engine, {}, lights);
